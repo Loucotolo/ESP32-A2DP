@@ -170,6 +170,8 @@ class BluetoothA2DPSink : public BluetoothA2DPCommon {
     virtual void set_channels(i2s_channel_t channels) {
         set_mono_downmix(channels==I2S_CHANNEL_MONO);
     }
+
+       
     /// mix stereo into single mono signal
     virtual void set_mono_downmix(bool enabled) {
         volume_control()->set_mono_downmix(enabled);
@@ -183,19 +185,11 @@ class BluetoothA2DPSink : public BluetoothA2DPCommon {
     /// Defines the pin for the master clock
     virtual esp_err_t i2s_mclk_pin_select(const uint8_t pin);
     
-    /// We need to confirm a new seesion by calling confirm_pin_code()
-    virtual void activate_pin_code(bool active);
 
-    /// confirms the connection request by returning the receivedn pin code
-    virtual void confirm_pin_code();
 
-    /// confirms the connection request by returning the indicated pin code
-    virtual void confirm_pin_code(int code);
+    virtual void setPin(const char *pin);
 
-    /// provides the requested pin code (0 = undefined)
-    virtual int pin_code() {
-        return pin_code_int;
-    }
+    virtual void clear_devices_paired();
 
     /// defines the requested metadata: eg. ESP_AVRC_MD_ATTR_TITLE | ESP_AVRC_MD_ATTR_ARTIST | ESP_AVRC_MD_ATTR_ALBUM | ESP_AVRC_MD_ATTR_TRACK_NUM | ESP_AVRC_MD_ATTR_NUM_TRACKS | ESP_AVRC_MD_ATTR_GENRE | ESP_AVRC_MD_ATTR_PLAYING_TIME
     virtual void set_avrc_metadata_attribute_mask(int flags){
@@ -218,9 +212,16 @@ class BluetoothA2DPSink : public BluetoothA2DPCommon {
  #ifdef ESP_IDF_4
     /// Get the name of the connected source device
     virtual const char* get_connected_source_name();
+    /// Set the callback that is called when they change the volume
+    virtual void get_remote_source_name(void (*callBack)(char*));
+
  #endif
 
   protected:
+    esp_bt_pin_type_t pin_type;
+    esp_bt_pin_code_t pin_code;
+ 
+
     // protected data
     xQueueHandle app_task_queue = nullptr;
     xTaskHandle app_task_handle = nullptr;
@@ -233,6 +234,7 @@ class BluetoothA2DPSink : public BluetoothA2DPCommon {
     char pin_code_str[20] = {0};
     bool is_i2s_output = true;
     bool player_init = false;
+ 
     i2s_channel_t i2s_channels = I2S_CHANNEL_STEREO;
     i2s_port_t i2s_port = I2S_NUM_0; 
     int connection_rety_count = 0;
@@ -240,11 +242,15 @@ class BluetoothA2DPSink : public BluetoothA2DPCommon {
     static const esp_spp_mode_t esp_spp_mode = ESP_SPP_MODE_CB;
     _lock_t s_volume_lock;
     uint8_t s_volume = 0;
+
     bool s_volume_notify;
-    int pin_code_int = 0;
     PinCodeRequest pin_code_request = Undefined;
-    bool is_pin_code_active = false;
+
+
     int avrc_metadata_flags = ESP_AVRC_MD_ATTR_TITLE | ESP_AVRC_MD_ATTR_ARTIST | ESP_AVRC_MD_ATTR_ALBUM | ESP_AVRC_MD_ATTR_TRACK_NUM | ESP_AVRC_MD_ATTR_NUM_TRACKS | ESP_AVRC_MD_ATTR_GENRE;
+    
+    
+    void (*bt_remote_source_name)(char*) = nullptr;
     void (*bt_volumechange)(int) = nullptr;
     void (*bt_dis_connected)() = nullptr;
     void (*bt_connected)() = nullptr;

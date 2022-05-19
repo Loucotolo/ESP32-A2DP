@@ -27,18 +27,18 @@ BluetoothA2DPSink::BluetoothA2DPSink() {
         // default i2s port is 0
         i2s_port = (i2s_port_t) 0;
 
-        // setup default i2s config
         i2s_config = {
             .mode = (i2s_mode_t) (I2S_MODE_MASTER | I2S_MODE_TX),
-            .sample_rate = 44100,
-            .bits_per_sample = (i2s_bits_per_sample_t)16,
+            .sample_rate = 16000,
+            .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
             .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
             .communication_format = (i2s_comm_format_t) (I2S_COMM_FORMAT_STAND_I2S),
-            .intr_alloc_flags = 0, // default interrupt priority
+            .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1, // default interrupt priority
             .dma_buf_count = 8,
-            .dma_buf_len = 64,
-            .use_apll = false,
-            .tx_desc_auto_clear = true // avoiding noise in case of data unavailability
+            .dma_buf_len = 1024,
+            .use_apll = false, // must be disabled in V2.0.1-RC1
+            .tx_desc_auto_clear = true, // avoiding noise in case of data unavailability
+			.fixed_mclk = I2S_PIN_NO_CHANGE
         };
 
         // setup default pins
@@ -102,13 +102,7 @@ void BluetoothA2DPSink::set_on_data_received(void (*callBack)()){
   this->data_received = callBack;
 }
 
-// void BluetoothA2DPSink::set_on_connected2BT(void (*callBack)()){
-//   this->bt_connected = callBack;
-// }
 
-// void BluetoothA2DPSink::set_on_dis_connected2BT(void (*callBack)()){
-//   this->bt_dis_connected = callBack;
-// }
 
 void BluetoothA2DPSink::set_on_volumechange(void (*callBack)(int)){
   this->bt_volumechange = callBack;
@@ -150,37 +144,19 @@ void BluetoothA2DPSink::start(const char* name)
     // setup bluetooth
     init_bluetooth();
 
+
+    //BT PIN
+    esp_bt_pin_type_t pin_type = ESP_BT_PIN_TYPE_FIXED;
+    esp_bt_gap_set_pin(pin_type, 4, pin_code);
+
+
     // create application task 
     app_task_start_up();
 
     // Bluetooth device name, connection mode and profile set up 
     app_work_dispatch(ccall_av_hdl_stack_evt, BT_APP_EVT_STACK_UP, NULL, 0);
-    
-    // handle security pin
-    if (is_pin_code_active) {
-        // Set default parameters for Secure Simple Pairing 
-        esp_bt_sp_param_t param_type = ESP_BT_SP_IOCAP_MODE;
-        esp_bt_io_cap_t iocap = ESP_BT_IO_CAP_IO;
-        esp_bt_gap_set_security_param(param_type, &iocap, sizeof(uint8_t));
-        // invokes callbacks
-        esp_bt_pin_type_t pin_type = ESP_BT_PIN_TYPE_VARIABLE;
-        esp_bt_pin_code_t pin_code;
-        esp_bt_gap_set_pin(pin_type, 0, pin_code);
-
-    } else {
-        // Set default parameters for Secure Simple Pairing 
-        esp_bt_sp_param_t param_type = ESP_BT_SP_IOCAP_MODE;
-        esp_bt_io_cap_t iocap = ESP_BT_IO_CAP_NONE;
-        esp_bt_gap_set_security_param(param_type, &iocap, sizeof(uint8_t));
-        // no callbacks
-        esp_bt_pin_type_t pin_type = ESP_BT_PIN_TYPE_FIXED;
-        esp_bt_pin_code_t pin_code;
-        esp_bt_gap_set_pin(pin_type, 0, pin_code);
-
-    }
-
-    log_free_heap();
-    
+   
+   log_free_heap();
 }
 
 void BluetoothA2DPSink::init_i2s() { 
@@ -193,6 +169,7 @@ void BluetoothA2DPSink::init_i2s() {
         } else {
             player_init = false; //reset player
         }
+
 
         // pins are only relevant when music is not sent to internal DAC
         if (i2s_config.mode & I2S_MODE_DAC_BUILT_IN) {
@@ -208,8 +185,10 @@ void BluetoothA2DPSink::init_i2s() {
                 ESP_LOGE(BT_AV_TAG,"i2s_set_pin failed");
             }
         }
+
     }
 }
+
 
 esp_err_t BluetoothA2DPSink::i2s_mclk_pin_select(const uint8_t pin) {
     if(pin != 0 && pin != 1 && pin != 3) {
@@ -254,6 +233,13 @@ const char* BluetoothA2DPSink::get_connected_source_name() {
         return("unknown");
     }
 }
+
+
+void BluetoothA2DPSink::get_remote_source_name(void (*callBack)(char*)){
+  this->bt_remote_source_name = callBack;
+
+}
+
 #endif
 
 int BluetoothA2DPSink::init_bluetooth()
@@ -278,7 +264,7 @@ int BluetoothA2DPSink::init_bluetooth()
     while(bt_stack_status != ESP_BLUEDROID_STATUS_ENABLED){
         if (esp_bluedroid_enable() != ESP_OK) {
             ESP_LOGE(BT_AV_TAG,"Failed to enable bluedroid");
-            delay(100);
+			delay(100);
             //return false;
         } else {
             ESP_LOGI(BT_AV_TAG,"bluedroid enabled"); 
@@ -384,10 +370,11 @@ void BluetoothA2DPSink::app_task_start_up(void)
         app_task_queue = xQueueCreate(10, sizeof(app_msg_t));
 
     if (app_task_handle==NULL) {
-        if (xTaskCreate(ccall_app_task_handler, "BtAppT", 2048, NULL, task_priority, &app_task_handle) != pdPASS){
-            ESP_LOGE(BT_APP_TAG, "%s failed", __func__);
-        }
-    }
+      if (xTaskCreate(ccall_app_task_handler, "BtAppT", 3072, NULL, task_priority, &app_task_handle) != pdPASS){
+           ESP_LOGE(BT_APP_TAG, "%s failed", __func__);
+       }
+
+   }
 }
 
 void BluetoothA2DPSink::app_task_shut_down(void)
@@ -428,7 +415,7 @@ void BluetoothA2DPSink::app_gap_callback(esp_bt_gap_cb_event_t event, esp_bt_gap
                 ESP_LOGE(BT_AV_TAG, "authentication failed, status:%d", param->auth_cmpl.stat);
                 // reset pin_code data to "undefined" after authentication failure
                 // just like when in disconnected state
-                pin_code_int = 0;
+		
                 pin_code_request = Undefined;
             }
             break;
@@ -445,14 +432,14 @@ void BluetoothA2DPSink::app_gap_callback(esp_bt_gap_cb_event_t event, esp_bt_gap
                 ESP_LOGI(BT_AV_TAG, "partner address: %s", to_str(peer_bd_addr));
 
                 ESP_LOGI(BT_AV_TAG, "ESP_BT_GAP_CFM_REQ_EVT Please confirm the passkey: %d", param->cfm_req.num_val);
-                pin_code_int = param->key_notif.passkey;
+         
                 pin_code_request = Confirm;
             }
             break;
 
         case ESP_BT_GAP_KEY_NOTIF_EVT: {
                 ESP_LOGI(BT_AV_TAG, "ESP_BT_GAP_KEY_NOTIF_EVT passkey:%d", param->key_notif.passkey);
-                pin_code_int = param->key_notif.passkey;
+             
                 pin_code_request = Reply;
             }
             break;
@@ -469,6 +456,11 @@ void BluetoothA2DPSink::app_gap_callback(esp_bt_gap_cb_event_t event, esp_bt_gap
                 if (param->read_rmt_name.stat == ESP_BT_STATUS_SUCCESS ) {
                   ESP_LOGI(BT_AV_TAG, "ESP_BT_GAP_READ_REMOTE_NAME_EVT remote name:%s", param->read_rmt_name.rmt_name);
                   memcpy(remote_name, param->read_rmt_name.rmt_name, ESP_BT_GAP_MAX_BDNAME_LEN );
+
+                  if (bt_remote_source_name!=nullptr){
+                    (*bt_remote_source_name)(remote_name);
+                  }  
+
                 }
             } 
             break;
@@ -651,13 +643,17 @@ void BluetoothA2DPSink::handle_connection_state(uint16_t event, void *p_param){
     if (a2d->conn_stat.state == ESP_A2D_CONNECTION_STATE_DISCONNECTED) {
         ESP_LOGI(BT_AV_TAG, "ESP_A2D_CONNECTION_STATE_DISCONNECTED");
         // reset pin code
-        pin_code_int = 0;
+
         pin_code_request = Undefined;
 
-        // call callback
-        if (bt_dis_connected!=nullptr){
-            (*bt_dis_connected)();
-        }    
+ 
+
+        //memcpy(remote_name, NULL, ESP_BT_GAP_MAX_BDNAME_LEN );
+
+        //if (bt_remote_source_name!=nullptr){
+          //  (*bt_remote_source_name)(remote_name);
+        //} 
+
         
         if (is_i2s_output) {
             ESP_LOGI(BT_AV_TAG, "i2s_stop");
@@ -697,10 +693,6 @@ void BluetoothA2DPSink::handle_connection_state(uint16_t event, void *p_param){
             }
         }
 
-        if (bt_connected!=nullptr){
-            (*bt_connected)();
-        }                
-        
         set_scan_mode_connectable(false);   
         connection_rety_count = 0;
         if (is_i2s_output) {
@@ -933,7 +925,6 @@ void BluetoothA2DPSink::audio_data_callback(const uint8_t *data, uint32_t len) {
 
     // adjust the volume
     volume_control()->update_audio_data((Frame*)data, len/4);
-
     // make data available via callback
     if (stream_reader!=nullptr){
         ESP_LOGD(BT_AV_TAG, "stream_reader");
@@ -1013,7 +1004,7 @@ void BluetoothA2DPSink::execute_avrc_command(int cmd){
     ESP_LOGD(BT_AV_TAG, "execute_avrc_command: %d",cmd);    
     esp_err_t ok = esp_avrc_ct_send_passthrough_cmd(0, cmd, ESP_AVRC_PT_CMD_STATE_PRESSED);
     if (ok==ESP_OK){
-        delay(100);
+		delay(100);
         ok = esp_avrc_ct_send_passthrough_cmd(0, cmd, ESP_AVRC_PT_CMD_STATE_RELEASED);
         if (ok==ESP_OK){
             ESP_LOGD(BT_AV_TAG, "execute_avrc_command: %d -> OK", cmd);    
@@ -1053,6 +1044,7 @@ void BluetoothA2DPSink::rewind(){
 void BluetoothA2DPSink::set_volume(uint8_t volume)
 {
   ESP_LOGI(BT_AV_TAG, "set_volume %d", volume);
+
   if (volume > 0x7f) {
       volume = 0x7f;
   } 
@@ -1072,39 +1064,47 @@ int BluetoothA2DPSink::get_volume()
   return s_volume;
 }
 
-void BluetoothA2DPSink::activate_pin_code(bool active){
-    is_pin_code_active = active;
+
+
+void BluetoothA2DPSink::setPin(const char *pin)
+{   
+    memcpy(pin_code, pin, 4);
 }
 
-void BluetoothA2DPSink::confirm_pin_code()
-{
-  if (pin_code_int!=0) {
-    confirm_pin_code(pin_code_int);
+
+void BluetoothA2DPSink::clear_devices_paired()
+{   
+  init_bluetooth();
+ 
+         
+  uint8_t pairedDeviceBtAddr[20][6];  
+
+
+  int count = esp_bt_gap_get_bond_device_num();
+  if(!count) {
+    log_i( "No bonded device found.");
   } else {
-    ESP_LOGI(BT_AV_TAG, "pincode not available (yet)");
+    log_i( "Bonded device count: %d",count); 
+    
+    esp_err_t tError =  esp_bt_gap_get_bond_device_list(&count, pairedDeviceBtAddr);
+  
+    for(int i = 0; i < count; i++) {
+        log_i( "Found bonded device #  %d -> %s" ,i, to_str(pairedDeviceBtAddr[i]));      
+        esp_err_t tError = esp_bt_gap_remove_bond_device(pairedDeviceBtAddr[i]);
+        if(ESP_OK == tError) {
+          log_i("Removed bonded device # "); 
+        } else {
+          log_i("Failed to remove bonded device # ");
+        }
+        
+    
+    }       
+    
   }
+
+  //BluetoothA2DPCommon::end(true);
 }
 
-void BluetoothA2DPSink::confirm_pin_code(int code)
-{
-  switch(pin_code_request){
-      case Confirm:
-        ESP_LOGI(BT_AV_TAG, "-> %s",  to_str(peer_bd_addr));
-        if (esp_bt_gap_ssp_confirm_reply(peer_bd_addr, true)!=ESP_OK){
-            ESP_LOGE(BT_AV_TAG,"esp_bt_gap_ssp_passkey_reply");
-        }
-        break;
-      case Reply:
-        ESP_LOGI(BT_AV_TAG, "confirm_pin_code %d -> %s", code, to_str(peer_bd_addr));
-        if (esp_bt_gap_ssp_passkey_reply(peer_bd_addr, true, code)!=ESP_OK){
-            ESP_LOGE(BT_AV_TAG,"esp_bt_gap_ssp_passkey_reply");
-        }
-        break;
-    default:
-        ESP_LOGE(BT_AV_TAG, "No open request -> %s",  to_str(peer_bd_addr));
-        break;
-  }
-}
 
 /**
  * public Callbacks 
@@ -1189,14 +1189,12 @@ void BluetoothA2DPSink::app_rc_tg_callback(esp_avrc_tg_cb_event_t event, esp_avr
 void BluetoothA2DPSink::volume_set_by_controller(uint8_t volume)
 {
     ESP_LOGI(BT_AV_TAG, "Volume is set by remote controller to %d", (uint32_t)volume * 100 / 0x7f);
-
     _lock_acquire(&s_volume_lock);
     s_volume = volume;
     _lock_release(&s_volume_lock);
     
     volume_control()->set_volume(s_volume);
     volume_control()->set_enabled(true);
-
     if (bt_volumechange!=nullptr){
         (*bt_volumechange)(s_volume);
     }    
@@ -1205,7 +1203,7 @@ void BluetoothA2DPSink::volume_set_by_controller(uint8_t volume)
 void BluetoothA2DPSink::volume_set_by_local_host(uint8_t volume)
 {
     ESP_LOGI(BT_AV_TAG, "Volume is set locally to: %d", (uint32_t)volume * 100 / 0x7f);
-
+ 
     _lock_acquire(&s_volume_lock);
     s_volume = volume;
     _lock_release(&s_volume_lock);

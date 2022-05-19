@@ -166,7 +166,6 @@ class BluetoothA2DPCommon {
             task_priority = priority;
         }
 
-
 #ifdef ESP_IDF_4
     /// Bluetooth discoverability
     virtual void set_discoverability(esp_bt_discovery_mode_t d);
@@ -191,7 +190,6 @@ class BluetoothA2DPCommon {
         // volume 
         uint8_t volume_value = 0;
         bool is_volume_used = false;
-
 #ifdef ESP_IDF_4
         esp_bt_discovery_mode_t discoverability = ESP_BT_GENERAL_DISCOVERABLE;
 #endif
